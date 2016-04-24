@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"github.com/sunny352/NetService/NS"
-	"github.com/sunny352/SimpleLog/SLog"
+	"github.com/SailorKGame/NetService/NS"
+	"github.com/SailorKGame/SimpleLog/SLog"
 	"net"
 )
 

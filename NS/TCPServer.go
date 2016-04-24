@@ -2,7 +2,7 @@ package NS
 
 import (
 	"fmt"
-	"github.com/sunny352/SimpleLog/SLog"
+	"github.com/SailorKGame/SimpleLog/SLog"
 	"io"
 	"net"
 )

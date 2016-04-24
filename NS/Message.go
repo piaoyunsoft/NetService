@@ -3,7 +3,7 @@ package NS
 import (
 	"encoding/binary"
 	"errors"
-	"github.com/sunny352/SimpleLog/SLog"
+	"github.com/SailorKGame/SimpleLog/SLog"
 	"io"
 	"net"
 )
