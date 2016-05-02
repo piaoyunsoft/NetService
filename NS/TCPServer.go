@@ -1,75 +1,38 @@
 package NS
 
 import (
-	"fmt"
-	"github.com/SailorKGame/SimpleLog/SLog"
 	"io"
 	"net"
 )
 
+type OnAccept func(net.Conn) error
+
 type TCPServer interface {
 	io.Closer
-	Listen(string, int) error
-	RunLoop() error
-	RegisterProcessor(MessageProcessor) error
+	RunLoop()
+	RegisterOnAccept(OnAccept)
 }
 
-func CreateTCPServer(ip string, port int) (TCPServer, error) {
+func CreateTCPServer(address string) TCPServer {
 	server := new(tcpServer_impl)
-	err := server.Listen(ip, port)
-	return server, err
+	return server
 }
 
 type tcpServer_impl struct {
-	tcpAddress *net.TCPAddr
-	listener   *net.TCPListener
-	processor  MessageProcessor
-	isRunning  bool
+	address net.TCPAddr
 }
 
-func (self *tcpServer_impl) Listen(ip string, port int) (err error) {
-	self.tcpAddress, err = net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", ip, port))
+func (self *tcpServer_impl) init(address string) (err error) {
+	self.address, err = net.ResolveTCPAddr("tcp", address)
 	return err
 }
 
-func (self *tcpServer_impl) RegisterProcessor(processor MessageProcessor) error {
-	self.processor = processor
-	return nil
-}
+func (self *tcpServer_impl) RunLoop() {
 
+}
+func (self *tcpServer_impl) RegisterOnAccept(callback OnAccept) {
+
+}
 func (self *tcpServer_impl) Close() error {
-	self.isRunning = false
 	return nil
-}
-
-func (self *tcpServer_impl) RunLoop() (err error) {
-	self.listener, err = net.ListenTCP("tcp", self.tcpAddress)
-	if nil != err {
-		return err
-	}
-	defer self.listener.Close()
-	self.isRunning = true
-	for self.isRunning {
-		connect, err := self.listener.AcceptTCP()
-		if nil != err {
-			SLog.E("TCPServer", err)
-			continue
-		}
-		go self.processConnect(connect)
-	}
-	return err
-}
-
-func (self tcpServer_impl) processConnect(connect net.Conn) (err error) {
-	SLog.I("TCPServer", "Process", connect.RemoteAddr())
-	defer connect.Close()
-	for self.isRunning && nil == err {
-		err = processConnect(connect, self.processor)
-	}
-	if nil != err {
-		SLog.E("TCPServer", err)
-	} else {
-		SLog.I("TCPServer", "Closed")
-	}
-	return err
 }
