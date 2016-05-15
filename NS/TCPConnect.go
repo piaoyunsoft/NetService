@@ -1,100 +1,106 @@
 package NS
 
 import (
-	"io"
 	"net"
-	"sync"
 	"encoding/binary"
+	"bytes"
+	"errors"
+	"sync"
 )
 
-type OnStart func()error
-type OnEnd func()error
+var NoConnectError = errors.New("Haven't created tcp connect!")
+var NotReadEnoughBytesError = errors.New("Not read enough bytes!")
+var NotSetReceiveCallbackError = errors.New("Not set receive callback!")
 
-type TCPConnect interface {
-	io.Closer
-	RegisterMsgSender(MsgSender)
-	RegisterMsgProcessor(MsgProcessor)
-	RegisterOnStart(OnStart)
-	RegisterOnEnd(OnEnd)
-	RegisterOnConnected(OnConnected)
-	RegisterOnDisconnected(OnDisconnect)
-
-	Send([]byte) error
-	RunLoop()
-}
-
-type tcpConnect_impl struct {
-	connect net.TCPConn
-	sender MsgSender
-	processor MsgProcessor
-	onStart OnStart
-	onEnd OnEnd
-	isRunning bool
+type TCPConnect struct {
 	lock sync.RWMutex
+	connect  net.TCPConn
+	security ISecurity
+	receiveCallback ReceiveCallback
 }
 
-func (self *tcpConnect_impl) RegisterMsgSender(sender MsgSender) {
-	self.sender = sender
-}
-func (self *tcpConnect_impl) RegisterMsgProcessor(processor MsgProcessor) {
-	self.processor = processor
-}
-func (self *tcpConnect_impl) RegisterOnStart(onStart OnStart){
-	self.onStart = onStart
-}
-func (self *tcpConnect_impl) RegisterOnEnd(onEnd OnEnd){
-	self.onEnd = onEnd
-}
-
-func (self *tcpConnect_impl) Send(body []byte) error {
-	if nil == self.sender {
-		return NoSenderError
-	}
-	return self.sender(self.connect, body)
-}
-func (self *tcpConnect_impl) RunLoop() {
+func (self *TCPConnect)SetConnect(connect net.TCPConn) {
 	self.lock.Lock()
-	self.isRunning = true
-	self.lock.Unlock()
+	defer self.lock.Unlock()
+	self.connect = connect
+}
+func (self *TCPConnect)getConnect() net.TCPConn {
+	self.lock.RLock()
+	defer self.lock.RUnlock()
+	return self.connect
+}
 
-	if nil != self.onStart {
-		err := self.onStart()
-		if nil != err {
-			panic(err)
-		}
-	}
-	if nil != self.onEnd {
-		defer func() {
-			err := self.onEnd()
-			if nil != err {
-				panic(err)
-			}
-		}()
-	}
-	if nil == self.processor {
-		panic(NoProcessorError)
-	}
-	for {
-		self.lock.RLock()
-		if !self.isRunning {
-			break
-		}
-		self.lock.RUnlock()
+func (self *TCPConnect)SetReceiveCallback(callback ReceiveCallback) {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+	self.receiveCallback = callback
+}
 
-		var length uint32
-		binary.Read(self.connect, binary.BigEndian, &length)
+func (self *TCPConnect)getReceiveCallback() ReceiveCallback {
+	self.lock.RLock()
+	defer self.lock.RUnlock()
+	return self.receiveCallback
+}
 
-		body := make([]byte, length)
-		_, err := io.ReadFull(self.connect, body)
-		if nil != err {
-			break
-		}
-		self.processor(self.connect, body)
+func (self *TCPConnect) SetSecurity(security ISecurity) {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+	self.security = security
+}
+
+func (self TCPConnect)getSecurity() ISecurity {
+	self.lock.RLock()
+	defer self.lock.RUnlock()
+	return self.security
+}
+
+func (self *TCPConnect) RunOnce() error {
+	connect := self.getConnect()
+	if nil == connect {
+		return NoConnectError
+	}
+	var length uint32
+	err := binary.Read(connect, binary.LittleEndian, &length)
+	if nil != err {
+		return err
+	}
+	buffer := make([]byte, length)
+	n, err := connect.Read(buffer)
+	if nil != err {
+		return err
+	}
+	if n != length {
+		return NotReadEnoughBytesError
+	}
+	security := self.getSecurity()
+	if nil != security {
+		buffer = security.Decrypt(buffer)
+	}
+	callback := self.getReceiveCallback()
+	if nil != callback {
+		return callback(buffer)
+	} else {
+		return NotSetReceiveCallbackError
 	}
 }
-func (self *tcpConnect_impl) Close() error {
-	self.lock.Lock()
-	self.lock.Unlock()
-	self.isRunning = false
-	return nil
+
+func (self *TCPConnect)Write(msgBytes []byte) (n int, err error) {
+	connect := self.getConnect()
+	if nil == connect {
+		return 0, NoConnectError
+	}
+	security := self.getSecurity()
+	if nil != security {
+		msgBytes = security.Encrypt(msgBytes)
+	}
+	buffer := bytes.NewBuffer(nil)
+	err = binary.Write(buffer, binary.LittleEndian, len(msgBytes))
+	if nil != err {
+		return 0, err
+	}
+	n, err = buffer.Write(msgBytes)
+	if nil != err {
+		return 0, err
+	}
+	return connect.Write(buffer)
 }

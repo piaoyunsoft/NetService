@@ -1,38 +1,48 @@
 package NS
 
 import (
-	"io"
 	"net"
+	"errors"
+	"sync"
 )
 
-type OnAccept func(net.Conn) error
+var NoListenerError = errors.New("No listener has created!")
 
-type TCPServer interface {
-	io.Closer
-	RunLoop()
-	RegisterOnAccept(OnAccept)
-}
-
-func CreateTCPServer(address string) TCPServer {
-	server := new(tcpServer_impl)
-	return server
-}
-
-type tcpServer_impl struct {
+type TCPServer struct {
+	lock sync.RWMutex
 	address net.TCPAddr
+	listener net.TCPListener
 }
 
-func (self *tcpServer_impl) init(address string) (err error) {
+func (self *TCPServer)SetAddress(address string) (err error) {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+
 	self.address, err = net.ResolveTCPAddr("tcp", address)
 	return err
 }
 
-func (self *tcpServer_impl) RunLoop() {
+func (self *TCPServer)Listen() (err error) {
+	self.lock.Lock()
+	defer self.lock.Unlock()
 
+	self.listener, err = net.ListenTCP("tcp", self.address)
+	return err
 }
-func (self *tcpServer_impl) RegisterOnAccept(callback OnAccept) {
 
+func (self *TCPServer)RunOnce() (TCPConnect, error) {
+	self.lock.RLock()
+	defer self.lock.RUnlock()
+
+	if nil == self.listener {
+		return NoListenerError
+	}
+	connect, err := self.listener.AcceptTCP()
+	if nil != err {
+		return err
+	}
+	tcpConnect := new(TCPConnect)
+	tcpConnect.SetConnect(connect)
+	return tcpConnect, nil
 }
-func (self *tcpServer_impl) Close() error {
-	return nil
-}
+
