@@ -1,82 +1,70 @@
 package NS
 
 import (
-	"encoding/binary"
-	"fmt"
-	"io"
+	"errors"
+	"github.com/SailorKGame/SimpleLog/SLog"
 	"net"
 )
 
-type TCPClient interface {
-	io.Closer
-	Connect(string, int) error
-	RunLoop() error
-	Send(uint16, []byte) error
-	RegisterProcessor(MessageProcessor) error
-	RegisterOnConnected(func() error)
-	RegisterOnDisconnect(func() error)
+var NoAddressError = errors.New("No address to connect!")
+
+type TCPClient struct {
+	address         *net.TCPAddr
+	isAutoReconnect bool
+	TCPConnect
 }
 
-func CreateTCPClient(ip string, port int) (TCPClient, error) {
-	client := new(tcpClient_impl)
-	err := client.Connect(ip, port)
+func (self *TCPClient) setAddress(address string) (err error) {
+	self.address, err = net.ResolveTCPAddr("tcp", address)
+	return err
+}
+
+func (self TCPClient) GetAddress() *net.TCPAddr {
+	return self.address
+}
+
+func (self *TCPClient) SetAutoReconnect(isAuto bool) {
+	self.isAutoReconnect = isAuto
+}
+func (self *TCPClient) IsAutoReconnect() bool {
+	return self.isAutoReconnect
+}
+
+func (self *TCPClient) Connect() (err error) {
+	if nil == self.address {
+		return NoAddressError
+	}
+	self.connect, err = net.DialTCP("tcp", nil, self.address)
+	return err
+}
+
+func CreateTCPClient(address string) (*TCPClient, error) {
+	client := &TCPClient{isAutoReconnect: true}
+	err := client.setAddress(address)
 	return client, err
 }
 
-type tcpClient_impl struct {
-	remoteAddress *net.TCPAddr
-	isRunning     bool
-	connect       *net.TCPConn
-
-	processor    MessageProcessor
-	onConnected  func() error
-	onDisconnect func() error
-}
-
-func (self *tcpClient_impl) Connect(ip string, port int) (err error) {
-	self.remoteAddress, err = net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", ip, port))
-	return err
-}
-func (self *tcpClient_impl) RunLoop() (err error) {
-	self.connect, err = net.DialTCP(self.remoteAddress.Network(), nil, self.remoteAddress)
-	if nil != err {
-		return err
-	}
-	defer self.connect.Close()
-	self.isRunning = true
-	self.onConnected()
-	defer func() {
-		if nil != self.onDisconnect {
-			self.onDisconnect()
+func RunTCPClient(client *TCPClient) {
+	for {
+		err := client.RunOnce()
+		if nil == err {
+			continue
 		}
-	}()
-	for self.isRunning && nil == err {
-		err = processConnect(self.connect, self.processor)
+		if NoConnectError == err {
+			SLog.W("TCPClient", "No connected")
+			err = client.Connect()
+			if nil == err {
+				err = client.onConnectedCallback(&client.TCPConnect)
+				if nil != err {
+					SLog.W("TCPClient", err)
+				}
+				continue
+			}
+		}
+		SLog.W("TCPClient", err)
+		client.setConnect(nil)
+		if !client.IsAutoReconnect() {
+			break
+		}
 	}
-	return err
-}
-func (self *tcpClient_impl) Close() error {
-	self.isRunning = false
-	return nil
-}
-func (self *tcpClient_impl) RegisterProcessor(processor MessageProcessor) error {
-	self.processor = processor
-	return nil
-}
-func (self *tcpClient_impl) RegisterOnConnected(onConnected func() error) {
-	self.onConnected = onConnected
-}
-func (self *tcpClient_impl) RegisterOnDisconnect(onDisconnect func() error) {
-	self.onDisconnect = onDisconnect
-}
-func (self *tcpClient_impl) Send(msgType uint16, msgBytes []byte) error {
-	var msg Message
-	msg.Body = msgBytes
-	msg.TypeID = msgType
-	msg.Length = uint16(len(msg.Body) + 8)
-	binary.Write(self.connect, binary.BigEndian, msg.Length)
-	binary.Write(self.connect, binary.BigEndian, msg.TypeID)
-	self.connect.Write(msg.Body)
-	//SendMessage(self.connect, msg)
-	return nil
 }

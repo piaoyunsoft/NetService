@@ -1,75 +1,83 @@
 package NS
 
 import (
-	"fmt"
+	"errors"
 	"github.com/SailorKGame/SimpleLog/SLog"
-	"io"
 	"net"
+	"sync"
 )
 
-type TCPServer interface {
-	io.Closer
-	Listen(string, int) error
-	RunLoop() error
-	RegisterProcessor(MessageProcessor) error
+var NoListenerError = errors.New("No listener has created!")
+
+type TCPServer struct {
+	lock     sync.RWMutex
+	address  *net.TCPAddr
+	listener *net.TCPListener
 }
 
-func CreateTCPServer(ip string, port int) (TCPServer, error) {
-	server := new(tcpServer_impl)
-	err := server.Listen(ip, port)
+func (self *TCPServer) SetAddress(address string) (err error) {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+
+	self.address, err = net.ResolveTCPAddr("tcp", address)
+	return err
+}
+
+func (self *TCPServer) ClearListener() {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+
+	self.listener = nil
+}
+
+func (self *TCPServer) Listen() (err error) {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+
+	self.listener, err = net.ListenTCP("tcp", self.address)
+	return err
+}
+
+func (self *TCPServer) RunOnce() (*TCPConnect, error) {
+	self.lock.RLock()
+	defer self.lock.RUnlock()
+
+	if nil == self.listener {
+		return nil, NoListenerError
+	}
+	connect, err := self.listener.AcceptTCP()
+	if nil != err {
+		return nil, err
+	}
+	tcpConnect := new(TCPConnect)
+	tcpConnect.setConnect(connect)
+	return tcpConnect, nil
+}
+
+func CreateTCPServer(address string) (*TCPServer, error) {
+	server := new(TCPServer)
+	err := server.SetAddress(address)
 	return server, err
 }
 
-type tcpServer_impl struct {
-	tcpAddress *net.TCPAddr
-	listener   *net.TCPListener
-	processor  MessageProcessor
-	isRunning  bool
-}
-
-func (self *tcpServer_impl) Listen(ip string, port int) (err error) {
-	self.tcpAddress, err = net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", ip, port))
-	return err
-}
-
-func (self *tcpServer_impl) RegisterProcessor(processor MessageProcessor) error {
-	self.processor = processor
-	return nil
-}
-
-func (self *tcpServer_impl) Close() error {
-	self.isRunning = false
-	return nil
-}
-
-func (self *tcpServer_impl) RunLoop() (err error) {
-	self.listener, err = net.ListenTCP("tcp", self.tcpAddress)
-	if nil != err {
-		return err
-	}
-	defer self.listener.Close()
-	self.isRunning = true
-	for self.isRunning {
-		connect, err := self.listener.AcceptTCP()
-		if nil != err {
-			SLog.E("TCPServer", err)
+func RunTCPServer(server *TCPServer, onAccept func(*TCPConnect) error) {
+	for {
+		connect, err := server.RunOnce()
+		if nil == err {
+			err = onAccept(connect)
+			if nil != err {
+				SLog.W("TCPServer", err)
+			}
 			continue
 		}
-		go self.processConnect(connect)
+		if NoListenerError == err {
+			err = server.Listen()
+			if nil != err {
+				SLog.W("TCPServer", err)
+			}
+			continue
+		}
+		SLog.W("TCPServer", err)
+		server.ClearListener()
 	}
-	return err
-}
-
-func (self tcpServer_impl) processConnect(connect net.Conn) (err error) {
-	SLog.I("TCPServer", "Process", connect.RemoteAddr())
-	defer connect.Close()
-	for self.isRunning && nil == err {
-		err = processConnect(connect, self.processor)
-	}
-	if nil != err {
-		SLog.E("TCPServer", err)
-	} else {
-		SLog.I("TCPServer", "Closed")
-	}
-	return err
 }
