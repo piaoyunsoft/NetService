@@ -2,33 +2,31 @@ package NS
 
 import (
 	"errors"
-	"net"
 	"github.com/SailorKGame/SimpleLog/SLog"
+	"net"
 )
 
 var NoAddressError = errors.New("No address to connect!")
 
-type ReceiveCallback func([]byte) error
-
 type TCPClient struct {
-	address net.TCPAddr
+	address         *net.TCPAddr
 	isAutoReconnect bool
 	TCPConnect
 }
 
-func (self *TCPClient) SetAddress(address string) (err error) {
+func (self *TCPClient) setAddress(address string) (err error) {
 	self.address, err = net.ResolveTCPAddr("tcp", address)
 	return err
 }
 
-func (self TCPClient) GetAddress() net.TCPAddr {
+func (self TCPClient) GetAddress() *net.TCPAddr {
 	return self.address
 }
 
-func (self *TCPClient)SetAutoReconnect(isAuto bool) {
+func (self *TCPClient) SetAutoReconnect(isAuto bool) {
 	self.isAutoReconnect = isAuto
 }
-func (self *TCPClient)IsAutoReconnect() bool {
+func (self *TCPClient) IsAutoReconnect() bool {
 	return self.isAutoReconnect
 }
 
@@ -40,10 +38,10 @@ func (self *TCPClient) Connect() (err error) {
 	return err
 }
 
-func CreateTCPClient(address string) *TCPClient {
-	client := new(TCPClient)
-	client.SetAddress(address)
-	return client
+func CreateTCPClient(address string) (*TCPClient, error) {
+	client := &TCPClient{isAutoReconnect: true}
+	err := client.setAddress(address)
+	return client, err
 }
 
 func RunTCPClient(client *TCPClient) {
@@ -53,13 +51,18 @@ func RunTCPClient(client *TCPClient) {
 			continue
 		}
 		if NoConnectError == err {
-			err == client.Connect()
+			SLog.W("TCPClient", "No connected")
+			err = client.Connect()
 			if nil == err {
+				err = client.onConnectedCallback(&client.TCPConnect)
+				if nil != err {
+					SLog.W("TCPClient", err)
+				}
 				continue
 			}
 		}
 		SLog.W("TCPClient", err)
-		client.SetConnect(nil)
+		client.setConnect(nil)
 		if !client.IsAutoReconnect() {
 			break
 		}

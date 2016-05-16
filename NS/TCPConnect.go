@@ -1,44 +1,51 @@
 package NS
 
 import (
-	"net"
-	"encoding/binary"
 	"bytes"
+	"encoding/binary"
 	"errors"
+	"github.com/SailorKGame/SimpleLog/SLog"
+	"net"
 	"sync"
 )
+
+type ReceiveCallback func(*TCPConnect, []byte) error
+type OnConnectedCallback func(*TCPConnect) error
 
 var NoConnectError = errors.New("Haven't created tcp connect!")
 var NotReadEnoughBytesError = errors.New("Not read enough bytes!")
 var NotSetReceiveCallbackError = errors.New("Not set receive callback!")
 
 type TCPConnect struct {
-	lock sync.RWMutex
-	connect  net.TCPConn
-	security ISecurity
-	receiveCallback ReceiveCallback
+	lock                sync.RWMutex
+	connect             *net.TCPConn
+	security            ISecurity
+	onConnectedCallback OnConnectedCallback
+	receiveCallback     ReceiveCallback
 }
 
-func (self *TCPConnect)SetConnect(connect net.TCPConn) {
+func (self *TCPConnect) setConnect(connect *net.TCPConn) {
 	self.lock.Lock()
 	defer self.lock.Unlock()
 	self.connect = connect
 }
-func (self *TCPConnect)getConnect() net.TCPConn {
-	self.lock.RLock()
-	defer self.lock.RUnlock()
+func (self TCPConnect) GetConnect() *net.TCPConn {
 	return self.connect
 }
 
-func (self *TCPConnect)SetReceiveCallback(callback ReceiveCallback) {
+func (self *TCPConnect) SetOnConnectedCallback(callback OnConnectedCallback) {
+	self.lock.Lock()
+	defer self.lock.Unlock()
+	self.onConnectedCallback = callback
+}
+
+func (self *TCPConnect) SetReceiveCallback(callback ReceiveCallback) {
 	self.lock.Lock()
 	defer self.lock.Unlock()
 	self.receiveCallback = callback
 }
 
-func (self *TCPConnect)getReceiveCallback() ReceiveCallback {
-	self.lock.RLock()
-	defer self.lock.RUnlock()
+func (self TCPConnect) getReceiveCallback() ReceiveCallback {
 	return self.receiveCallback
 }
 
@@ -48,14 +55,12 @@ func (self *TCPConnect) SetSecurity(security ISecurity) {
 	self.security = security
 }
 
-func (self TCPConnect)getSecurity() ISecurity {
-	self.lock.RLock()
-	defer self.lock.RUnlock()
+func (self TCPConnect) getSecurity() ISecurity {
 	return self.security
 }
 
 func (self *TCPConnect) RunOnce() error {
-	connect := self.getConnect()
+	connect := self.GetConnect()
 	if nil == connect {
 		return NoConnectError
 	}
@@ -69,32 +74,38 @@ func (self *TCPConnect) RunOnce() error {
 	if nil != err {
 		return err
 	}
-	if n != length {
+	if n != int(length) {
 		return NotReadEnoughBytesError
 	}
 	security := self.getSecurity()
 	if nil != security {
-		buffer = security.Decrypt(buffer)
+		buffer, err = security.Decrypt(buffer)
+		if nil != err {
+			return err
+		}
 	}
 	callback := self.getReceiveCallback()
 	if nil != callback {
-		return callback(buffer)
+		return callback(self, buffer)
 	} else {
 		return NotSetReceiveCallbackError
 	}
 }
 
-func (self *TCPConnect)Write(msgBytes []byte) (n int, err error) {
-	connect := self.getConnect()
+func (self *TCPConnect) Write(msgBytes []byte) (n int, err error) {
+	connect := self.GetConnect()
 	if nil == connect {
 		return 0, NoConnectError
 	}
 	security := self.getSecurity()
 	if nil != security {
-		msgBytes = security.Encrypt(msgBytes)
+		msgBytes, err = security.Encrypt(msgBytes)
+		if nil != err {
+			return 0, err
+		}
 	}
 	buffer := bytes.NewBuffer(nil)
-	err = binary.Write(buffer, binary.LittleEndian, len(msgBytes))
+	err = binary.Write(buffer, binary.LittleEndian, uint32(len(msgBytes)))
 	if nil != err {
 		return 0, err
 	}
@@ -102,5 +113,22 @@ func (self *TCPConnect)Write(msgBytes []byte) (n int, err error) {
 	if nil != err {
 		return 0, err
 	}
-	return connect.Write(buffer)
+	return connect.Write(buffer.Bytes())
+}
+
+func RunTCPConnect(connect *TCPConnect) {
+	err := connect.onConnectedCallback(connect)
+	if nil != err {
+		SLog.E("TCPConnect", err)
+		return
+	}
+	for {
+		err := connect.RunOnce()
+		if nil == err {
+			continue
+		}
+		SLog.W("TCPConnect", err)
+		connect.setConnect(nil)
+		break
+	}
 }
