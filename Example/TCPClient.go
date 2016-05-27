@@ -3,24 +3,35 @@ package main
 import (
 	"github.com/SailorKGame/NetService/NS"
 	"github.com/SailorKGame/SimpleLog/SLog"
+	"runtime"
 )
 
 func main() {
-	SLog.D("Client", "Start")
-	client, err := NS.CreateTCPClient("127.0.0.1:8123")
+	SLog.I("Test", "StartClient")
+	client, err := NS.CreateTCPClient("TestClient", "127.0.0.1:9631")
 	if nil != err {
-		SLog.E("Client", err)
+		SLog.E("Test", err)
 		return
 	}
-	SLog.D("Client", "Created client")
-	client.SetOnConnectedCallback(func(connect *NS.TCPConnect) error {
-		n, err := connect.Write([]byte("test"))
-		SLog.D("Client", "OnConnected", n)
-		return err
-	})
-	client.SetReceiveCallback(func(connect *NS.TCPConnect, msgBytes []byte) error {
-		SLog.I("Client", string(msgBytes), connect.GetConnect().RemoteAddr())
+	client.SetOnConnectedCallback(func(client NS.TCPClient, connect NS.TCPConnect) (err error) {
+		connect.SetOnConnectedCallback(func(connect NS.TCPConnect) (err error) {
+			SLog.D("Test", "OnConnected")
+			connect.Send([]byte("ClientToServer"))
+			return nil
+		})
+		connect.SetOnReceiveMsgCallback(func(connect NS.TCPConnect, msgBytes []byte) (err error) {
+			SLog.D("Test", "OnReceive", string(msgBytes))
+			return nil
+		})
+		connect.SetOnClosedCallback(func(connect NS.TCPConnect) (err error) {
+			SLog.D("Test", "OnClosed")
+			return nil
+		})
 		return nil
 	})
-	NS.RunTCPClient(client)
+	client.Start()
+
+	for {
+		runtime.Gosched()
+	}
 }
