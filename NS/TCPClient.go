@@ -1,70 +1,71 @@
 package NS
 
 import (
-	"errors"
 	"github.com/SailorKGame/SimpleLog/SLog"
+	"io"
 	"net"
 )
 
-var NoAddressError = errors.New("No address to connect!")
+type TCPClient interface {
+	Start() //发起连接，创建线程
+	SetOnConnectedCallback(callback func(client TCPClient, connect TCPConnect) (err error))
+	GetConnect() TCPConnect
+	io.Closer
+}
 
-type TCPClient struct {
+func CreateTCPClient(name string, address string) (client TCPClient, err error) {
+	clientImpl := new(tcpClient_impl)
+	err = clientImpl.init(name, address)
+	if nil != err {
+		return nil, err
+	}
+	return clientImpl, nil
+}
+
+type tcpClient_impl struct {
+	name            string
 	address         *net.TCPAddr
 	isAutoReconnect bool
-	TCPConnect
+	connect         TCPConnect
+	onConnected     func(client TCPClient, connect TCPConnect) (err error)
 }
 
-func (self *TCPClient) setAddress(address string) (err error) {
+func (self *tcpClient_impl) init(name string, address string) (err error) {
+	self.name = name
 	self.address, err = net.ResolveTCPAddr("tcp", address)
+	self.isAutoReconnect = true
 	return err
 }
-
-func (self TCPClient) GetAddress() *net.TCPAddr {
-	return self.address
+func (self *tcpClient_impl) Start() {
+	go self.run()
+}
+func (self *tcpClient_impl) SetOnConnectedCallback(callback func(client TCPClient, connect TCPConnect) (err error)) {
+	self.onConnected = callback
+}
+func (self *tcpClient_impl) GetConnect() TCPConnect {
+	return self.connect
+}
+func (self *tcpClient_impl) Close() (err error) {
+	self.isAutoReconnect = false
+	return self.connect.Close()
 }
 
-func (self *TCPClient) SetAutoReconnect(isAuto bool) {
-	self.isAutoReconnect = isAuto
-}
-func (self *TCPClient) IsAutoReconnect() bool {
-	return self.isAutoReconnect
+func (self *tcpClient_impl) OnConnectClosed(connect TCPConnect) {
+
 }
 
-func (self *TCPClient) Connect() (err error) {
-	if nil == self.address {
-		return NoAddressError
-	}
-	self.connect, err = net.DialTCP("tcp", nil, self.address)
-	return err
-}
-
-func CreateTCPClient(address string) (*TCPClient, error) {
-	client := &TCPClient{isAutoReconnect: true}
-	err := client.setAddress(address)
-	return client, err
-}
-
-func RunTCPClient(client *TCPClient) {
-	for {
-		err := client.RunOnce()
-		if nil == err {
+func (self *tcpClient_impl) run() {
+	for self.isAutoReconnect {
+		connect, err := net.DialTCP("tcp", nil, self.address)
+		if nil != err {
+			SLog.W("TCPClient", err)
 			continue
 		}
-		if NoConnectError == err {
-			SLog.W("TCPClient", "No connected")
-			err = client.Connect()
-			if nil == err {
-				err = client.onConnectedCallback(&client.TCPConnect)
-				if nil != err {
-					SLog.W("TCPClient", err)
-				}
-				continue
-			}
-		}
-		SLog.W("TCPClient", err)
-		client.setConnect(nil)
-		if !client.IsAutoReconnect() {
-			break
-		}
+		tcpConnect := new(tcpConnect_impl)
+		tcpConnect.init(self, connect)
+		self.connect = tcpConnect
+		self.onConnected(self, tcpConnect)
+		tcpConnect.run()
+		self.connect = nil
 	}
 }

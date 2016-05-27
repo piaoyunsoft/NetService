@@ -3,26 +3,35 @@ package main
 import (
 	"github.com/SailorKGame/NetService/NS"
 	"github.com/SailorKGame/SimpleLog/SLog"
+	"runtime"
 )
 
 func main() {
-	SLog.D("Server", "Start")
-	server, err := NS.CreateTCPServer(":8123")
+	SLog.I("Test", "Start Server")
+	server, err := NS.CreateTCPServer("TestServer", ":9631")
 	if nil != err {
-		SLog.E("Server", err)
+		SLog.E("Test", err)
 		return
 	}
-	NS.RunTCPServer(server, func(connect *NS.TCPConnect) error {
-		connect.SetOnConnectedCallback(func(connect *NS.TCPConnect) error {
-			SLog.D("Server", connect.GetConnect().RemoteAddr())
+	server.SetOnAcceptCallback(func(server NS.TCPServer, connect NS.TCPConnect) (err error) {
+		connect.SetOnConnectedCallback(func(connect NS.TCPConnect) (err error) {
+			SLog.D("Test", "OnConnected")
+			connect.Send([]byte("ServerToClient"))
 			return nil
 		})
-		connect.SetReceiveCallback(func(connect *NS.TCPConnect, msgBytes []byte) error {
-			SLog.I("Server", string(msgBytes))
-			_, err := connect.Write([]byte("Server Echo"))
-			return err
+		connect.SetOnReceiveMsgCallback(func(connect NS.TCPConnect, msgBytes []byte) (err error) {
+			SLog.D("Test", "OnReceive", string(msgBytes))
+			return nil
 		})
-		go NS.RunTCPConnect(connect)
+		connect.SetOnClosedCallback(func(connect NS.TCPConnect) (err error) {
+			SLog.D("Test", "OnClosed")
+			return nil
+		})
 		return nil
 	})
+	server.Start()
+
+	for {
+		runtime.Gosched()
+	}
 }
