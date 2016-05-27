@@ -3,6 +3,7 @@ package NS
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/SailorKGame/SimpleLog/SLog"
 	"io"
 	"net"
 )
@@ -17,6 +18,8 @@ type TCPConnect interface {
 	SetOnClosedCallback(callback func(connect TCPConnect) (err error))                      //设置连接主动关闭回调
 	Send(msgBytes []byte) error
 	io.Closer
+
+	SetSecurity(security ISecurity) //设置加解密组件
 }
 
 type tcpConnect_impl struct {
@@ -27,6 +30,8 @@ type tcpConnect_impl struct {
 	onConnect func(connect TCPConnect) (err error)
 	onReceive func(connect TCPConnect, msgBytes []byte) (err error)
 	onClosed  func(connect TCPConnect) (err error)
+
+	security ISecurity
 }
 
 func (self *tcpConnect_impl) SetOnConnectedCallback(callback func(connect TCPConnect) (err error)) {
@@ -39,6 +44,14 @@ func (self *tcpConnect_impl) SetOnClosedCallback(callback func(connect TCPConnec
 	self.onClosed = callback
 }
 func (self *tcpConnect_impl) Send(msgBytes []byte) error {
+	if nil != self.security {
+		out, err := self.security.Encrypt(msgBytes)
+		if nil != err {
+			SLog.E("TCPConnect", err)
+		} else {
+			msgBytes = out
+		}
+	}
 	buffer := bytes.NewBuffer(nil)
 	length := uint32(len(msgBytes))
 	binary.Write(buffer, binary.LittleEndian, &length)
@@ -49,6 +62,10 @@ func (self *tcpConnect_impl) Send(msgBytes []byte) error {
 func (self *tcpConnect_impl) Close() error {
 	self.isRunning = false
 	return self.connect.Close()
+}
+
+func (self *tcpConnect_impl) SetSecurity(security ISecurity) {
+	self.security = security
 }
 
 func (self *tcpConnect_impl) init(parent IParent, connect *net.TCPConn) {
@@ -66,6 +83,14 @@ func (self *tcpConnect_impl) runOnce() (err error) {
 	_, err = io.ReadFull(self.connect, buffer)
 	if nil != err {
 		return err
+	}
+	if nil != self.security {
+		out, err := self.security.Decrypt(buffer)
+		if nil != err {
+			SLog.W("TCPConnect", err)
+		} else {
+			buffer = out
+		}
 	}
 	return self.onReceive(self, buffer)
 }
